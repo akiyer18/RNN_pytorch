@@ -9,18 +9,32 @@ import random
 import re
 from data_rnn import *
 
-# ------------- Data Loading -------------
-
+# ------------- Data Preparation -------------
 # Load the ndfa dataset
 x_train, (i2w, w2i) = load_ndfa(n=150_000, seed=0)
 
-# ------------- Data Preparation -------------
+# Hyperparameters
+vocab_size = len(i2w)  # 15
+embedding_dim = 32  # e=32
+hidden_size = 16  # h=16
+num_layers = 2  # Single layer
+
+batch_size = 64
+epochs = 3
+learning_rate = 0.001
+
+# Temperature for sampling
+sampling_temperature = 1  # Adjust as needed (lower for less randomness)
+max_length = 50  # Adjust based on the data
+
 
 # Convert sequences to PyTorch tensors
 x_train_tensors = [torch.tensor(seq, dtype=torch.long) for seq in x_train]
 
 # Define maximum sequence length (based on your data or set a reasonable limit)
-max_length = 50  # Adjust as needed
+
+# Number of samples to generate per epoch
+num_samples = 10
 
 # Pad sequences with the `.pad` token (index 0) at the end
 x_train_padded = pad_sequence(
@@ -96,18 +110,6 @@ elif torch.cuda.is_available():
 else:
     device = torch.device('cpu')
     print("Using CPU for training.")
-
-# Initialize the model
-vocab_size = len(i2w)  # 15
-embedding_dim = 32  # e=32
-hidden_size = 16  # h=16
-num_layers = 1  # Single layer
-
-batch_size = 64
-epochs = 3
-learning_rate = 0.001
-#max_length = 50  # Adjust based on the data
-
 
 model = SimpleLSTMModel(
     vocab_size=vocab_size,
@@ -197,12 +199,6 @@ def generate_sample(model, seed_seq, w2i, i2w, max_length=50, temperature=0.5):
 
 # Define a seed sequence
 seed_sequence = [w2i['s']]  # Start with 's'
-
-# Number of samples to generate per epoch
-num_samples = 10
-
-# Temperature for sampling
-sampling_temperature = 1  # Adjust as needed (lower for less randomness)
 
 # Training Loop with Sampling
 model.train()  # Ensure the model is in training mode
