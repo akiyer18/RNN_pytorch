@@ -14,7 +14,6 @@ from data_rnn import *
 # Load the ndfa dataset
 x_train, (i2w, w2i) = load_ndfa(n=150_000, seed=0)
 
-
 # ------------- Data Preparation -------------
 
 # Convert sequences to PyTorch tensors
@@ -124,7 +123,6 @@ model.to(device)
 
 # Define loss function and optimizer
 criterion = nn.CrossEntropyLoss(ignore_index=w2i['.pad'])  # Ignore padding in loss
-learning_rate = 0.001
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
 

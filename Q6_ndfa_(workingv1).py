@@ -2,31 +2,35 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from torch.nn.utils.rnn import pad_sequence
+import torch.nn.functional as F
+import torch.distributions as dist
 import numpy as np
 import random
+import re
 from data_rnn import *
 
 # ------------- Data Preparation -------------
 
-# Load the Brackets dataset
-x_train, (i2w, w2i) = load_brackets(n=150_000)
-#i2w = ['.pad', '.start', '.end', '.unk', '(', ')']
-#w2i = {'.pad': 0, '.start': 1, '.end': 2, '.unk': 3, '(': 4, ')': 5}
+# Load the NDFA dataset
+x_train, (i2w, w2i) = load_ndfa(n=150_000, seed=0)
 
-# Hyperparameters
-embedding_dim = 32  # e=32
-hidden_size = 16  # h=16
-num_layers = 3  # Single layer
+# Define Hyperparameters
+embedding_dim = 32    # e=32
+hidden_size = 16      # h=16
+num_layers = 2        # Single layer
 batch_size = 64
-epochs = 20
-learning_rate = 0.005
-max_length = 50  # Adjust based on your data
-vocab_size = len(i2w)  # 6
+epochs = 10
+learning_rate = 0.001
+max_length = 50       # Adjust based on your data
+vocab_size = len(i2w) #15 for NDFA
 
 # Convert sequences to PyTorch tensors
 x_train_tensors = [torch.tensor(seq, dtype=torch.long) for seq in x_train]
 
-# Pad sequences
+# Define maximum sequence length (based on your data or set a reasonable limit)
+max_length = 50  # Adjust as needed
+
+# Pad sequences with the `.pad` token (index 0) at the end
 x_train_padded = pad_sequence(
     x_train_tensors,
     batch_first=True,
@@ -41,6 +45,8 @@ else:
     x_train_padded = torch.nn.functional.pad(x_train_padded, padding, value=w2i['.pad'])
 
 # Creating Targets for Next-Token Prediction
+# Input: all tokens except the last
+# Target: all tokens except the first
 x_input = x_train_padded[:, :-1]  # Shape: (batch, time)
 y_target = x_train_padded[:, 1:]  # Shape: (batch, time)
 
@@ -49,7 +55,6 @@ dataset = TensorDataset(x_input, y_target)
 
 # Create DataLoader
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
 
 # ------------- Model Definition -------------
 
@@ -84,16 +89,7 @@ class SimpleLSTMModel(nn.Module):
         logits = self.fc(lstm_out)  # Shape: (batch, time, vocab_size)
         return logits
 
-
-# Initialize the model
-model = SimpleLSTMModel(
-    vocab_size=vocab_size,
-    embedding_dim=embedding_dim,
-    hidden_size=hidden_size,
-    num_layers=num_layers
-)
-
-# ------------ Device Configuration ------------
+# ------------- Device Configuration -------------
 
 # Check for MPS (Apple GPU) support
 if torch.backends.mps.is_available():
@@ -106,18 +102,70 @@ else:
     device = torch.device('cpu')
     print("Using CPU for training.")
 
+# Initialize the model
+model = SimpleLSTMModel(
+    vocab_size=vocab_size,
+    embedding_dim=embedding_dim,
+    hidden_size=hidden_size,
+    num_layers=num_layers
+)
+
 # Move the model to the selected device
 model.to(device)
 
-# ------------ Loss Function and Optimizer ------------
+# ------------- Loss Function and Optimizer -------------
 
 # Define loss function and optimizer
 criterion = nn.CrossEntropyLoss(ignore_index=w2i['.pad'])  # Ignore padding in loss
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-# ------------ Training Loop ------------
+# ------------- Sampling Function -------------
 
-model.train()  # Set the model to training mode
+def generate_sequence(model, seed_seq, w2i, i2w, device, max_length=50):
+    """
+    Generate a sequence by sampling from the model starting with a seed sequence.
+
+    Args:
+        model (nn.Module): The trained PyTorch model.
+        seed_seq (list of int): The seed sequence as a list of integer indices.
+        w2i (dict): Word-to-index mapping.
+        i2w (list): Index-to-word mapping.
+        device (torch.device): The device to run the model on.
+        max_length (int): Maximum length of the generated sequence.
+
+    Returns:
+        list of str: The generated sequence as a list of tokens.
+    """
+    model.eval()
+    generated_seq = seed_seq.copy()
+    input_tensor = torch.tensor([generated_seq], dtype=torch.long).to(device)
+
+    with torch.no_grad():
+        for _ in range(max_length - len(seed_seq)):
+            outputs = model(input_tensor)
+            last_logits = outputs[0, -1, :]
+            probs = F.softmax(last_logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1).item()
+            generated_seq.append(next_token)
+            if next_token == w2i['s']:
+                break
+            input_tensor = torch.tensor([generated_seq], dtype=torch.long).to(device)
+
+    generated_tokens = [i2w[idx] if idx < len(i2w) else '.unk' for idx in generated_seq]
+    return generated_tokens
+
+# ------------- Training Loop -------------
+
+# Define a seed sequence
+seed_sequence = [w2i['s']]  # Start with 's'
+
+# Number of samples to generate per epoch
+num_samples = 10
+
+# Training Loop
+model.train()  # Ensure the model is in training mode
+
+losses = []  # To track training loss
 
 for epoch in range(1, epochs + 1):
     epoch_loss = 0
@@ -151,10 +199,27 @@ for epoch in range(1, epochs + 1):
         epoch_loss += loss.item()
 
     avg_loss = epoch_loss / len(dataloader)
+    losses.append(avg_loss)
     print(f'Epoch {epoch}/{epochs}, Loss: {avg_loss:.4f}')
 
+    # Generate and print samples after each epoch, similar to the Q7 to check the model performance
+    print(f'\n--- Samples after Epoch {epoch} ---')
+    for i in range(num_samples):
+        generated = generate_sequence(
+            model=model,
+            seed_seq=seed_sequence,
+            w2i=w2i,
+            i2w=i2w,
+            device=device,
+            max_length=max_length
+        )
+        # Join tokens to form a string
+        generated_str = ''.join(generated)
+        print(f'Sample {i + 1}: {generated_str}')
+    print('-----------------------------------\n')
+    # If you don't want to generate samples after per epoch, comment the part above
 
-# ------------ Evaluation ------------
+# ------------- Evaluation -------------
 
 def evaluate(model, dataloader, criterion, device):
     model.eval()  # Set the model to evaluation mode
@@ -174,54 +239,26 @@ def evaluate(model, dataloader, criterion, device):
     avg_loss = total_loss / len(dataloader)
     return avg_loss
 
-
 # Evaluate on the training data (or replace with validation DataLoader)
 val_loss = evaluate(model, dataloader, criterion, device)
 print(f'Validation Loss: {val_loss:.4f}')
 
-
-# ------------ Making Predictions ------------
+# ------------- Making Final Predictions -------------
 
 # Function to convert indices to tokens
 def indices_to_tokens(indices, i2w):
     return [i2w[idx] if idx < len(i2w) else '.unk' for idx in indices]
 
-# Define the sampling function (as defined earlier)
-import torch
-import torch.nn.functional as F
-
-def generate_sequence(model, seed_seq, w2i, i2w, device, max_length=50):
-    model.eval()
-    generated_seq = seed_seq.copy()
-    input_tensor = torch.tensor([generated_seq], dtype=torch.long).to(device)
-
-    with torch.no_grad():
-        for _ in range(max_length - len(seed_seq)):
-            outputs = model(input_tensor)
-            last_logits = outputs[0, -1, :]
-            probs = F.softmax(last_logits, dim=-1)
-            next_token = torch.multinomial(probs, num_samples=1).item()
-            generated_seq.append(next_token)
-            if next_token == w2i['.end']:
-                break
-            input_tensor = torch.tensor([generated_seq], dtype=torch.long).to(device)
-
-    generated_tokens = [i2w[idx] if idx < len(i2w) else '.unk' for idx in generated_seq]
-    return generated_tokens
-
-# Example seed sequence: .start ( ( )
-seed_seq = [w2i['.start'], w2i['('], w2i['('], w2i[')']]
-
-# Generate a sequence
+# Example prediction
+sample_sequence = [w2i['s']]  # Starting with 's'
 generated_tokens = generate_sequence(
     model=model,
-    seed_seq=seed_seq,
+    seed_seq=sample_sequence,
     w2i=w2i,
     i2w=i2w,
     device=device,
-    max_length=50
+    max_length=max_length
 )
-
-# Print the generated sequence
-print("Generated Sequence:", ' '.join(generated_tokens))
-
+# Join tokens to form a string
+generated_str = ''.join(generated_tokens)
+print("\nFinal Sample:", generated_str)
