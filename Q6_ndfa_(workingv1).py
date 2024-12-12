@@ -81,7 +81,7 @@ class SimpleLSTMModel(nn.Module):
         Args:
             x (torch.LongTensor): Input tensor of shape (batch, time)
 
-        Returns:
+        Returns:`
             torch.FloatTensor: Output tensor of shape (batch, time, vocab_size)
         """
         embedded = self.embedding(x)  # Shape: (batch, time, embedding_dim)
@@ -176,7 +176,6 @@ for epoch in range(1, epochs + 1):
 
         # Zero the gradients
         optimizer.zero_grad()
-
         # Forward pass
         outputs = model(batch_x)  # Shape: (batch, time, vocab_size)
 
