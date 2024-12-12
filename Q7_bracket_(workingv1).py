@@ -11,10 +11,8 @@ from data_rnn import *
 # ------------- Data Preparation -------------
 # Load data
 x_train, (i2w, w2i) = load_brackets(n=150_000)
-
-# Define mappings
-i2w = ['.pad', '.start', '.end', '.unk', '(', ')']
-w2i = {'.pad': 0, '.start': 1, '.end': 2, '.unk': 3, '(': 4, ')': 5}
+#i2w = ['.pad', '.start', '.end', '.unk', '(', ')']
+#w2i = {'.pad': 0, '.start': 1, '.end': 2, '.unk': 3, '(': 4, ')': 5}
 
 # Hyperparameters
 embedding_dim = 32  # e=32
